@@ -1,18 +1,8 @@
 const express = require('express');
 const RankingEngine = require('../services/rankingEngine');
-const ESPNService = require('../services/espnService');
+const playerStore = require('../services/playerStore');
 
 const router = express.Router();
-
-let playersCache = null;
-
-const initializeCache = () => {
-  if (!playersCache) {
-    const mockPlayers = ESPNService.getMockPlayers();
-    playersCache = mockPlayers;
-  }
-  return playersCache;
-};
 
 /**
  * POST /api/algorithms/test
@@ -22,7 +12,7 @@ const initializeCache = () => {
  *   - position?: Filter by position
  *   - limit?: Limit results
  */
-router.post('/test', (req, res) => {
+router.post('/test', async (req, res) => {
   try {
     const { weights, position, limit } = req.body;
 
@@ -48,7 +38,7 @@ router.post('/test', (req, res) => {
       positionScarcityWeight: weights.positionScarcityWeight / total,
     };
 
-    let players = initializeCache();
+    let players = await playerStore.getPlayers();
 
     // Filter by position if provided
     if (position) {
@@ -79,7 +69,7 @@ router.post('/test', (req, res) => {
  * Body:
  *   - strategies: Array of { name, weights }
  */
-router.post('/compare', (req, res) => {
+router.post('/compare', async (req, res) => {
   try {
     const { strategies } = req.body;
 
@@ -87,7 +77,7 @@ router.post('/compare', (req, res) => {
       return res.status(400).json({ error: 'strategies array required with at least 1 item' });
     }
 
-    const players = initializeCache();
+    const players = await playerStore.getPlayers();
 
     // Compare strategies
     const comparison = RankingEngine.compareStrategies(

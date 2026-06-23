@@ -101,15 +101,20 @@ class RankingEngine {
       positions[player.position].push(player.projected_points || 0);
     });
 
-    // Calculate position scarcity (top 5 average at position)
+    // Normalize against the pool's max projection so scoring is scale-independent
+    // (works for both per-game values ~25 and season totals ~340).
+    const maxProjection = Math.max(1, ...players.map((p) => p.projected_points || 0));
+
+    // Calculate position scarcity (top 5 projected average at position, 0-100)
     const positionScarcity = {};
     Object.entries(positions).forEach(([pos, scores]) => {
       const topFive = scores.sort((a, b) => b - a).slice(0, 5);
-      positionScarcity[pos] = (topFive.reduce((a, b) => a + b, 0) / 5 / 30) * 100;
+      const avg = topFive.reduce((a, b) => a + b, 0) / topFive.length;
+      positionScarcity[pos] = (avg / maxProjection) * 100;
     });
 
     return {
-      maxProjection: Math.max(...players.map((p) => p.projected_points || 0)),
+      maxProjection,
       positionScarcity,
       positions,
     };

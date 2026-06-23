@@ -1,20 +1,8 @@
 const express = require('express');
 const RankingEngine = require('../services/rankingEngine');
-const ESPNService = require('../services/espnService');
+const playerStore = require('../services/playerStore');
 
 const router = express.Router();
-
-// Mock in-memory storage for players (in production, this would use PostgreSQL)
-let playersCache = null;
-
-// Initialize players cache with mock data
-const initializeCache = () => {
-  if (!playersCache) {
-    const mockPlayers = ESPNService.getMockPlayers();
-    playersCache = mockPlayers;
-  }
-  return playersCache;
-};
 
 /**
  * GET /api/players
@@ -24,9 +12,9 @@ const initializeCache = () => {
  *   - weights: JSON string with ranking weights
  *   - limit: Limit number of results
  */
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const players = initializeCache();
+    const players = await playerStore.getPlayers();
     const { position, weights, limit } = req.query;
 
     let filteredPlayers = players;
@@ -63,9 +51,9 @@ router.get('/', (req, res) => {
  * GET /api/players/:id
  * Get a specific player
  */
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const players = initializeCache();
+    const players = await playerStore.getPlayers();
     const player = players.find((p) => p.espn_id === req.params.id);
 
     if (!player) {

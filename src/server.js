@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 
+const playerStore = require('./services/playerStore');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -9,9 +11,9 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Health check endpoint
+// Health check endpoint — includes data source/freshness
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), data: playerStore.getMeta() });
 });
 
 // Routes
@@ -27,4 +29,6 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`Fantasy Football Backend running on port ${PORT}`);
+  // Warm the player cache on boot so the first request is fast.
+  playerStore.refresh();
 });

@@ -1,6 +1,6 @@
 const express = require('express');
 const RankingEngine = require('../services/rankingEngine');
-const ESPNService = require('../services/espnService');
+const playerStore = require('../services/playerStore');
 
 const router = express.Router();
 
@@ -28,16 +28,6 @@ const STRATEGIES = {
   },
 };
 
-let playersCache = null;
-
-const initializeCache = () => {
-  if (!playersCache) {
-    const mockPlayers = ESPNService.getMockPlayers();
-    playersCache = mockPlayers;
-  }
-  return playersCache;
-};
-
 /**
  * GET /api/rankings
  * Get pre-computed or compute rankings on demand
@@ -45,9 +35,9 @@ const initializeCache = () => {
  *   - strategy: Name of strategy (balanced, adpHeavy, projectionHeavy, valueHeavy)
  *   - groupBy: Group results by position
  */
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const players = initializeCache();
+    const players = await playerStore.getPlayers();
     const { strategy, groupBy } = req.query;
 
     const strategyName = strategy || 'balanced';
