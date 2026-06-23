@@ -21,6 +21,7 @@ class ESPNService {
         adp_floor: 8,
         adp_ceiling: 18,
         projected_points: 28.5,
+        imageUrl: 'https://a.espncdn.com/media/motion/2021/0315/dm_210315_nfl_mahomes_01.jpg',
       },
       {
         espn_id: 'qb-2',
@@ -59,6 +60,7 @@ class ESPNService {
         adp_floor: 2,
         adp_ceiling: 10,
         projected_points: 24.3,
+        imageUrl: 'https://a.espncdn.com/media/motion/2021/0129/dm_210129_nfl_mccaffrey.jpg',
       },
       {
         espn_id: 'rb-2',
@@ -109,6 +111,7 @@ class ESPNService {
         adp_floor: 1,
         adp_ceiling: 10,
         projected_points: 25.6,
+        imageUrl: 'https://a.espncdn.com/media/motion/2021/0816/dm_210816_nfl_tyreekhill.jpg',
       },
       {
         espn_id: 'wr-2',
@@ -159,6 +162,7 @@ class ESPNService {
         adp_floor: 3,
         adp_ceiling: 14,
         projected_points: 21.8,
+        imageUrl: 'https://a.espncdn.com/media/motion/2021/0819/dm_210819_nfl_kelce.jpg',
       },
       {
         espn_id: 'te-2',
