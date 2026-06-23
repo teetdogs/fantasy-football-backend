@@ -7,6 +7,7 @@
 
 const espnLive = require('./espnLiveService');
 const ESPNService = require('./espnService');
+const statsService = require('./statsService');
 
 const TTL_MS = parseInt(process.env.PLAYER_CACHE_TTL_MS || `${6 * 60 * 60 * 1000}`, 10); // 6h
 const PLAYER_LIMIT = parseInt(process.env.PLAYER_LIMIT || '300', 10);
@@ -25,15 +26,18 @@ function isFresh() {
 
 async function refresh() {
   try {
-    const players = await espnLive.fetchPlayers({ limit: PLAYER_LIMIT });
-    if (!players.length) throw new Error('ESPN returned 0 players');
+    const raw = await espnLive.fetchPlayers({ limit: PLAYER_LIMIT });
+    if (!raw.length) throw new Error('ESPN returned 0 players');
+    const players = raw.map(statsService.enrich); // attach real last-season stats
     cache = { players, source: 'espn', fetchedAt: Date.now() };
-    console.log(`[playerStore] loaded ${players.length} players from ESPN`);
+    const withStats = players.filter((p) => p.lastSeason).length;
+    console.log(`[playerStore] loaded ${players.length} players from ESPN (${withStats} with ${statsService.SEASON} stats)`);
   } catch (err) {
     console.error(`[playerStore] ESPN fetch failed, using mock data: ${err.message}`);
     // Only fall back if we have nothing cached at all.
     if (!cache.players) {
-      cache = { players: ESPNService.getMockPlayers(), source: 'mock', fetchedAt: Date.now() };
+      const players = ESPNService.getMockPlayers().map(statsService.enrich);
+      cache = { players, source: 'mock', fetchedAt: Date.now() };
     }
   }
   return cache.players;
