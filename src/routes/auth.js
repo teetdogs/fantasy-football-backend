@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const { OAuth2Client } = require('google-auth-library');
 const pool = require('../db/connection');
 
@@ -18,10 +19,16 @@ const makeClient = () => new OAuth2Client(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI
  * Redirect the user to Google's consent screen.
  */
 router.get('/google', (req, res) => {
+  // CSRF protection: generate a random state, stash it in the session, and
+  // verify it matches when Google redirects back. Blocks login-CSRF attacks.
+  const state = crypto.randomBytes(16).toString('hex');
+  req.session.oauthState = state;
+
   const url = makeClient().generateAuthUrl({
     access_type: 'offline',
     scope: ['openid', 'email', 'profile'],
     prompt: 'select_account',
+    state,
   });
   res.redirect(url);
 });
@@ -32,9 +39,16 @@ router.get('/google', (req, res) => {
  * fetch profile, upsert user, create session.
  */
 router.get('/google/callback', async (req, res) => {
-  const { code } = req.query;
+  const { code, state } = req.query;
   if (!code) {
     return res.redirect(`${FRONTEND_URL}?auth=error&reason=no_code`);
+  }
+
+  // Verify the state matches what we issued — reject mismatches (CSRF).
+  const expectedState = req.session.oauthState;
+  delete req.session.oauthState;
+  if (!state || !expectedState || state !== expectedState) {
+    return res.redirect(`${FRONTEND_URL}?auth=error&reason=bad_state`);
   }
 
   try {

@@ -9,7 +9,9 @@ const playerStore = require('./services/playerStore');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+// Strip any trailing slash — it would never match the browser's Origin header
+// and would break every credentialed CORS request.
+const FRONTEND_URL = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
 
 // Trust the reverse proxy (Render/Railway/Vercel) so secure cookies work in prod.
 // Without this, express-session sees HTTP behind the proxy and refuses to set
