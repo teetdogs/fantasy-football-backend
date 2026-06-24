@@ -49,15 +49,42 @@ async function fetchProTeams(season = DEFAULT_SEASON) {
   return map;
 }
 
+// ESPN stat id -> our projected stat-line key (verified by magnitude against
+// known players, e.g. Bijan: 24=rushYds 1443, 23=car 307, 53=rec, 42=recYds).
+const PROJ_STAT_MAP = {
+  0: 'att',
+  1: 'comp',
+  3: 'passYds',
+  4: 'passTd',
+  20: 'int',
+  23: 'car',
+  24: 'rushYds',
+  25: 'rushTd',
+  42: 'recYds',
+  43: 'recTd',
+  53: 'rec',
+  58: 'tgt',
+};
+
 /**
- * Extract season-long projected fantasy points (statSourceId 1 = projection).
+ * Extract the season-long projection (statSourceId 1 = projection): the total
+ * fantasy points plus a position-relevant projected stat line.
  */
 function extractProjection(player) {
   const stats = player.stats || [];
   const proj = stats.find((s) => s.statSourceId === 1 && s.statSplitTypeId === 0);
-  return proj && typeof proj.appliedTotal === 'number'
-    ? Math.round(proj.appliedTotal * 10) / 10
-    : undefined;
+  if (!proj) return null;
+
+  const line = {};
+  const raw = proj.stats || {};
+  Object.entries(PROJ_STAT_MAP).forEach(([id, key]) => {
+    if (raw[id] != null) line[key] = Math.round(Number(raw[id]));
+  });
+
+  return {
+    fpts: typeof proj.appliedTotal === 'number' ? Math.round(proj.appliedTotal * 10) / 10 : null,
+    ...line,
+  };
 }
 
 /**
@@ -91,6 +118,7 @@ async function fetchPlayers({ season = DEFAULT_SEASON, limit = 300 } = {}) {
     const team = proTeams[p.proTeamId] || {};
     const adp = p.ownership?.averageDraftPosition;
     const isDST = position === 'DEF';
+    const projection = extractProjection(p);
 
     players.push({
       id: p.id,
@@ -101,7 +129,8 @@ async function fetchPlayers({ season = DEFAULT_SEASON, limit = 300 } = {}) {
       nfl_team: team.abbrev || 'FA',
       bye_week: team.byeWeek || null,
       adp: adp && adp > 0 ? Math.round(adp * 10) / 10 : null,
-      projected_points: extractProjection(p),
+      projected_points: projection ? projection.fpts : undefined,
+      projection,
       imageUrl: isDST ? teamLogo(team.abbrev) : headshot(p.id),
     });
   });
