@@ -120,6 +120,10 @@ async function fetchPlayers({ season = DEFAULT_SEASON, limit = 300 } = {}) {
     const isDST = position === 'DEF';
     const projection = extractProjection(p);
 
+    // ESPN expert rank (PPR)
+    const rankEntries = (p.rankings && p.rankings['0']) || [];
+    const pprRank = rankEntries.find((r) => r.rankType === 'PPR');
+
     players.push({
       id: p.id,
       espn_id: String(p.id),
@@ -132,6 +136,9 @@ async function fetchPlayers({ season = DEFAULT_SEASON, limit = 300 } = {}) {
       projected_points: projection ? projection.fpts : undefined,
       projection,
       imageUrl: isDST ? teamLogo(team.abbrev) : headshot(p.id),
+      injuryStatus: p.injuryStatus || 'ACTIVE',
+      seasonOutlook: p.seasonOutlook || null,
+      espnRank: pprRank ? pprRank.rank : null,
     });
   });
 
