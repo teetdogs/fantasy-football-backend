@@ -11,6 +11,13 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
+// Trust the reverse proxy (Render/Railway/Vercel) so secure cookies work in prod.
+// Without this, express-session sees HTTP behind the proxy and refuses to set
+// secure cookies — login silently fails.
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 // Middleware
 app.use(cors({
   origin: FRONTEND_URL,

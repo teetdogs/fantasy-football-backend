@@ -9,14 +9,16 @@ const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
-const oauth2Client = new OAuth2Client(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+// Fresh client per request — OAuth2Client holds mutable token state, so a
+// shared instance would let concurrent logins clobber each other.
+const makeClient = () => new OAuth2Client(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
 
 /**
  * GET /api/auth/google
  * Redirect the user to Google's consent screen.
  */
 router.get('/google', (req, res) => {
-  const url = oauth2Client.generateAuthUrl({
+  const url = makeClient().generateAuthUrl({
     access_type: 'offline',
     scope: ['openid', 'email', 'profile'],
     prompt: 'select_account',
@@ -36,10 +38,10 @@ router.get('/google/callback', async (req, res) => {
   }
 
   try {
-    const { tokens } = await oauth2Client.getToken(code);
-    oauth2Client.setCredentials(tokens);
+    const client = makeClient();
+    const { tokens } = await client.getToken(code);
 
-    const ticket = await oauth2Client.verifyIdToken({
+    const ticket = await client.verifyIdToken({
       idToken: tokens.id_token,
       audience: CLIENT_ID,
     });
