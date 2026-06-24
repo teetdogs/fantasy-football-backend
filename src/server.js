@@ -57,7 +57,10 @@ app.use('/api/league', require('./routes/league'));
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ error: err.message });
+  // If the response already started (e.g. session-store error mid-flight),
+  // delegate to Express's default handler instead of crashing on a double-send.
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: err.message || 'Internal server error' });
 });
 
 app.listen(PORT, () => {
