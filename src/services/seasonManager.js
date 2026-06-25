@@ -119,12 +119,15 @@ async function buildMyTeam({ leagueId, swid, espnS2, teamId }) {
   const numTeams = Object.keys(rosters).length || 10;
   const grade = gradeRoster(rosterPoolPlayers, pool, numTeams);
 
+  const lineup = buildLineup(roster);
+
   return {
     teamId,
     roster,
     waivers,
     drops,
     grade,
+    lineup,
     counts: Object.fromEntries(Object.entries(myByPosition).map(([pos, arr]) => [pos, arr.length])),
   };
 }
@@ -165,4 +168,68 @@ async function leaguePowerRankings({ leagueId, swid, espnS2 }) {
   return { rankings };
 }
 
-module.exports = { buildMyTeam, leaguePowerRankings };
+/**
+ * Build an optimal lineup for a given week.
+ * Assigns the highest-projected healthy, non-bye player to each slot.
+ * Returns recommended starters, bench, and swap suggestions.
+ */
+function buildLineup(roster, week) {
+  const SLOTS = [
+    { slot: 'QB1', pos: ['QB'], count: 1 },
+    { slot: 'RB', pos: ['RB'], count: 2 },
+    { slot: 'WR', pos: ['WR'], count: 3 },
+    { slot: 'TE1', pos: ['TE'], count: 1 },
+    { slot: 'FLEX', pos: ['RB', 'WR', 'TE'], count: 1 },
+    { slot: 'K1', pos: ['K'], count: 1 },
+    { slot: 'DEF1', pos: ['DEF'], count: 1 },
+  ];
+
+  const available = roster.map((p) => ({
+    ...p,
+    onBye: week && p.byeWeek === week,
+    hurt: p.injuryStatus && p.injuryStatus !== 'ACTIVE' && p.injuryStatus !== 'QUESTIONABLE',
+    playable: !(week && p.byeWeek === week) && !(p.injuryStatus && ['OUT', 'IR', 'SUSPENDED'].includes(p.injuryStatus)),
+    pts: p.projectedPoints ?? 0,
+  }));
+
+  const used = new Set();
+  const starters = [];
+
+  for (const slotDef of SLOTS) {
+    const candidates = available
+      .filter((p) => slotDef.pos.includes(p.position) && !used.has(p.playerId) && p.playable)
+      .sort((a, b) => b.pts - a.pts);
+
+    for (let i = 0; i < slotDef.count; i++) {
+      const pick = candidates[i];
+      if (pick) {
+        used.add(pick.playerId);
+        starters.push({ ...pick, slot: slotDef.slot.replace(/\d/, '') + (slotDef.count > 1 ? (i + 1) : '') });
+      }
+    }
+  }
+
+  const bench = available.filter((p) => !used.has(p.playerId));
+
+  // Swap suggestions: bench players who project higher than a starter at the same position
+  const swaps = [];
+  for (const benchP of bench) {
+    if (!benchP.playable) continue;
+    const weakStarter = starters
+      .filter((s) => s.position === benchP.position && benchP.pts > s.pts)
+      .sort((a, b) => a.pts - b.pts)[0];
+    if (weakStarter && benchP.pts - weakStarter.pts >= 5) {
+      swaps.push({
+        benchIn: { name: benchP.name, position: benchP.position, pts: benchP.pts },
+        starterOut: { name: weakStarter.name, position: weakStarter.position, pts: weakStarter.pts },
+        ptsDiff: Math.round(benchP.pts - weakStarter.pts),
+      });
+    }
+  }
+
+  const totalPts = Math.round(starters.reduce((s, p) => s + p.pts, 0));
+
+  return { starters, bench, swaps, totalPts, week };
+}
+
+module.exports = { buildMyTeam, leaguePowerRankings, buildLineup };
