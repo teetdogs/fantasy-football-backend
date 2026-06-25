@@ -135,23 +135,57 @@ router.post('/link-league', async (req, res) => {
     return res.status(401).json({ error: 'Not logged in' });
   }
 
-  const { espnLeagueId, espnTeamId } = req.body;
+  const { espnLeagueId, espnTeamId, espnSwid, espnS2 } = req.body;
   if (!espnLeagueId) {
     return res.status(400).json({ error: 'espnLeagueId required' });
   }
 
   try {
     const result = await pool.query(
-      `UPDATE users SET espn_league_id = $1, espn_team_id = $2, updated_at = NOW()
-       WHERE id = $3
+      `UPDATE users SET espn_league_id = $1, espn_team_id = $2, espn_swid = $3, espn_s2 = $4, updated_at = NOW()
+       WHERE id = $5
        RETURNING id, email, name, picture, espn_league_id, espn_team_id`,
-      [espnLeagueId, espnTeamId || null, req.session.userId]
+      [espnLeagueId, espnTeamId || null, espnSwid || null, espnS2 || null, req.session.userId]
     );
 
     res.json({ user: result.rows[0] });
   } catch (err) {
     console.error('Error linking league:', err);
     res.status(500).json({ error: 'Failed to link league' });
+  }
+});
+
+/**
+ * GET /api/auth/league-creds
+ * Return saved ESPN credentials for the logged-in user.
+ * Cookies are sensitive — only return them to the authenticated owner.
+ */
+router.get('/league-creds', async (req, res) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Not logged in' });
+  }
+
+  try {
+    const result = await pool.query(
+      'SELECT espn_league_id, espn_team_id, espn_swid, espn_s2 FROM users WHERE id = $1',
+      [req.session.userId]
+    );
+
+    if (!result.rows.length || !result.rows[0].espn_league_id) {
+      return res.json({ linked: false });
+    }
+
+    const row = result.rows[0];
+    res.json({
+      linked: true,
+      leagueId: row.espn_league_id,
+      teamId: row.espn_team_id,
+      swid: row.espn_swid,
+      espnS2: row.espn_s2,
+    });
+  } catch (err) {
+    console.error('Error fetching league creds:', err);
+    res.status(500).json({ error: 'Failed to fetch credentials' });
   }
 });
 

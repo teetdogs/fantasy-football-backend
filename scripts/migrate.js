@@ -1,25 +1,32 @@
 /**
- * Apply the auth schema to the configured database.
+ * Apply all schema migrations to the configured database.
  * Run with: npm run db:setup
  *
- * Idempotent (CREATE TABLE IF NOT EXISTS), so it's safe to run against a fresh
- * Neon database or re-run after changes. Use this on prod too after deploy.
+ * Idempotent — safe to re-run. Applies files in order:
+ *   auth-schema.sql, 002-espn-creds.sql, etc.
  */
 
 const fs = require('fs');
 const path = require('path');
 const pool = require('../src/db/connection');
 
-(async () => {
-  const file = path.join(__dirname, '..', 'src', 'db', 'auth-schema.sql');
-  const sql = fs.readFileSync(file, 'utf8');
+const MIGRATIONS = [
+  'auth-schema.sql',
+  '002-espn-creds.sql',
+];
 
+(async () => {
   const target = process.env.DATABASE_URL ? 'DATABASE_URL (cloud)' : 'local DB_* fields';
-  console.log(`Applying auth-schema.sql via ${target}…`);
+  console.log(`Running migrations via ${target}…`);
 
   try {
-    await pool.query(sql);
-    console.log('✓ Schema applied.');
+    for (const file of MIGRATIONS) {
+      const filePath = path.join(__dirname, '..', 'src', 'db', file);
+      const sql = fs.readFileSync(filePath, 'utf8');
+      await pool.query(sql);
+      console.log(`  ✓ ${file}`);
+    }
+    console.log('All migrations applied.');
     await pool.end();
     process.exit(0);
   } catch (err) {
