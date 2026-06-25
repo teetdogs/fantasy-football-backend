@@ -232,4 +232,148 @@ function buildLineup(roster, week) {
   return { starters, bench, swaps, totalPts, week };
 }
 
-module.exports = { buildMyTeam, leaguePowerRankings, buildLineup };
+/**
+ * Suggest trades by cross-referencing your surplus vs. other teams' needs.
+ * A "surplus" player is one ranked beyond your starter count at that position.
+ * A "need" is a position where a team's worst starter ranks below league average.
+ */
+async function suggestTrades({ leagueId, swid, espnS2, teamId }) {
+  const [rosters, teams, pool] = await Promise.all([
+    leagueService.fetchAllRosters(leagueId, swid, espnS2),
+    leagueService.fetchLeagueTeams(leagueId, swid, espnS2),
+    playerStore.getPlayers(),
+  ]);
+
+  const playerMap = new Map(pool.map((p) => [p.id, p]));
+  const teamMap = new Map(teams.map((t) => [t.teamId, t]));
+
+  function rosterByPos(entries) {
+    const byPos = {};
+    for (const e of entries) {
+      const p = playerMap.get(e.playerId);
+      if (!p) continue;
+      if (!byPos[p.position]) byPos[p.position] = [];
+      byPos[p.position].push(p);
+    }
+    for (const pos of Object.keys(byPos)) {
+      byPos[pos].sort((a, b) => (a.consensusRank || 999) - (b.consensusRank || 999));
+    }
+    return byPos;
+  }
+
+  function playerValue(p) {
+    const rank = p.consensusRank || p.rank || 999;
+    const pts = p.projected_points || 0;
+    const rankScore = Math.max(0, 100 - (rank / 300) * 100);
+    const ptsScore = Math.min(100, (pts / 400) * 100);
+    return Math.round(rankScore * 0.6 + ptsScore * 0.4);
+  }
+
+  const myEntries = rosters[teamId] || [];
+  const myByPos = rosterByPos(myEntries);
+
+  // Find my surplus players (beyond starter needs)
+  const mySurplus = [];
+  for (const [pos, need] of Object.entries(STARTER_NEEDS)) {
+    const mine = myByPos[pos] || [];
+    for (let i = need; i < mine.length; i++) {
+      mySurplus.push(mine[i]);
+    }
+  }
+
+  // Find my weak positions (where my worst starter is below average)
+  const myWeakPositions = [];
+  for (const [pos, need] of Object.entries(STARTER_NEEDS)) {
+    const mine = myByPos[pos] || [];
+    if (mine.length < need) {
+      myWeakPositions.push(pos);
+    } else {
+      const worstStarter = mine[need - 1];
+      if ((worstStarter.consensusRank || 999) > 80) {
+        myWeakPositions.push(pos);
+      }
+    }
+  }
+
+  const suggestions = [];
+
+  for (const [otherTeamIdStr, otherEntries] of Object.entries(rosters)) {
+    const otherTeamId = Number(otherTeamIdStr);
+    if (otherTeamId === teamId) continue;
+
+    const otherByPos = rosterByPos(otherEntries);
+    const otherTeam = teamMap.get(otherTeamId);
+    const otherName = otherTeam?.name || `Team ${otherTeamId}`;
+
+    // For each of my surplus players, see if this team needs that position
+    // and has a surplus at a position I need
+    for (const mySurplusPlayer of mySurplus) {
+      const theirNeedPos = mySurplusPlayer.position;
+      const theirPlayers = otherByPos[theirNeedPos] || [];
+      const theirNeed = STARTER_NEEDS[theirNeedPos] || 1;
+
+      // Do they actually need this position? (fewer than need, or worst starter is weak)
+      const theyNeedIt = theirPlayers.length < theirNeed ||
+        (theirPlayers[theirNeed - 1] && (theirPlayers[theirNeed - 1].consensusRank || 999) > (mySurplusPlayer.consensusRank || 999));
+
+      if (!theyNeedIt) continue;
+
+      // Find what they have that I need
+      for (const myNeedPos of myWeakPositions) {
+        const theirSurplusAtMyNeed = otherByPos[myNeedPos] || [];
+        const myNeed = STARTER_NEEDS[myNeedPos] || 1;
+
+        for (let i = 0; i < theirSurplusAtMyNeed.length; i++) {
+          const theirPlayer = theirSurplusAtMyNeed[i];
+          const isSurplusForThem = i >= myNeed;
+          const isUpgradeForMe = !myByPos[myNeedPos]?.length ||
+            (theirPlayer.consensusRank || 999) < (myByPos[myNeedPos][myByPos[myNeedPos].length - 1]?.consensusRank || 999);
+
+          if (!isUpgradeForMe) continue;
+
+          const myVal = playerValue(mySurplusPlayer);
+          const theirVal = playerValue(theirPlayer);
+          const diff = Math.abs(myVal - theirVal);
+
+          // Only suggest reasonably fair trades (within 15 value points)
+          if (diff > 15) continue;
+
+          suggestions.push({
+            partner: { teamId: otherTeamId, name: otherName },
+            give: {
+              name: mySurplusPlayer.name,
+              position: mySurplusPlayer.position,
+              team: mySurplusPlayer.team,
+              consensusRank: mySurplusPlayer.consensusRank || mySurplusPlayer.rank,
+              value: myVal,
+              isSurplus: true,
+            },
+            get: {
+              name: theirPlayer.name,
+              position: theirPlayer.position,
+              team: theirPlayer.team,
+              consensusRank: theirPlayer.consensusRank || theirPlayer.rank,
+              value: theirVal,
+              isSurplusForThem: isSurplusForThem,
+            },
+            fairness: diff <= 5 ? 'Fair' : myVal > theirVal ? 'You overpay slightly' : 'You get slight edge',
+            valueDiff: theirVal - myVal,
+            reason: `Your ${mySurplusPlayer.position} depth for their ${theirPlayer.position} — fills your need at ${myNeedPos}`,
+          });
+        }
+      }
+    }
+  }
+
+  // Sort by fairness (closest to 0 diff first), then by value of player received
+  suggestions.sort((a, b) => {
+    const fairA = Math.abs(a.valueDiff);
+    const fairB = Math.abs(b.valueDiff);
+    if (fairA !== fairB) return fairA - fairB;
+    return b.get.value - a.get.value;
+  });
+
+  return { suggestions: suggestions.slice(0, 15) };
+}
+
+module.exports = { buildMyTeam, leaguePowerRankings, buildLineup, suggestTrades };
