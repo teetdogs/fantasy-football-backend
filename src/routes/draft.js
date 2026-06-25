@@ -56,4 +56,22 @@ router.post('/simulate', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/draft/recommend
+ * Return AI-scored pick recommendations based on the current draft state.
+ * Body: { yourSlot, numTeams, picks: [{ playerId, teamSlot }, ...] }
+ */
+router.post('/recommend', async (req, res) => {
+  try {
+    const { yourSlot = 1, numTeams = 12, picks = [] } = req.body;
+
+    const pool = await playerStore.getPlayers();
+    const result = gradingEngine.recommend({ yourSlot, numTeams, picks }, pool);
+    res.json(result);
+  } catch (err) {
+    console.error('Error generating recommendations:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

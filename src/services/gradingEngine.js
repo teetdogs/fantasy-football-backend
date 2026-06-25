@@ -186,4 +186,123 @@ function simulateDraft(yourSlot, numTeams, numRounds, yourPicks, pool) {
   return { rounds, available: stillAvailable };
 }
 
-module.exports = { grade, simulateDraft, toLetter, ROSTER_SLOTS };
+/**
+ * Recommend the best available player for the user's next pick.
+ * Considers value vs. ADP, positional need, scarcity, and raw talent.
+ *
+ * @param {Object} draftState - { yourSlot, numTeams, picks: [{ playerId, teamSlot }] }
+ * @param {Array}  pool       - Full player pool sorted by consensus
+ * @returns {Object} { recommendations, needs, currentPick, yourNextPick, picksBetween }
+ */
+function recommend(draftState, pool) {
+  const { yourSlot, numTeams, picks } = draftState;
+  const totalPicks = picks.length;
+
+  const takenIds = new Set(picks.map((p) => p.playerId));
+  const available = pool.filter((p) => !takenIds.has(p.id));
+
+  const yourPlayerIds = picks.filter((p) => p.teamSlot === yourSlot).map((p) => p.playerId);
+  const yourPlayers = yourPlayerIds.map((id) => pool.find((p) => p.id === id)).filter(Boolean);
+
+  const posCount = {};
+  for (const player of yourPlayers) {
+    posCount[player.position] = (posCount[player.position] || 0) + 1;
+  }
+
+  const NEEDS = { QB: 1, RB: 2, WR: 3, TE: 1, K: 1, DEF: 1 };
+
+  const posAvailMap = {};
+  for (const pos of Object.keys(NEEDS)) {
+    posAvailMap[pos] = available.filter((p) => p.position === pos);
+  }
+
+  // Figure out when the user picks next
+  const yourRound = yourPlayers.length + 1;
+  const isSnakeReverse = yourRound % 2 === 0;
+  const yourNextOverall = isSnakeReverse
+    ? (yourRound - 1) * numTeams + (numTeams - yourSlot + 1)
+    : (yourRound - 1) * numTeams + yourSlot;
+  const picksBetween = Math.max(0, yourNextOverall - totalPicks - 1);
+
+  const scored = available.slice(0, 150).map((player) => {
+    let score = 0;
+    const reasons = [];
+    const rank = player.consensusRank || player.rank || 999;
+    const pos = player.position;
+    const have = posCount[pos] || 0;
+    const need = NEEDS[pos] || 0;
+    const posAvail = posAvailMap[pos] || [];
+    const posRankAmongAvail = posAvail.findIndex((p) => p.id === player.id) + 1;
+
+    // VALUE — how does consensus rank compare to current pick?
+    const currentOverall = totalPicks + 1;
+    const valueDelta = rank - currentOverall;
+    score += Math.min(35, Math.max(0, 17.5 + valueDelta * 0.7));
+    if (valueDelta >= 15) reasons.push('Huge value — should be gone');
+    else if (valueDelta >= 8) reasons.push('Great value at this pick');
+    else if (valueDelta >= 3) reasons.push('Good value');
+
+    // NEED — starter slots still unfilled?
+    if (have < need) {
+      score += 25 - have * 8;
+      reasons.push(have === 0 ? `No ${pos} yet` : `Need another ${pos}`);
+    } else if (!['K', 'DEF'].includes(pos) && have < need + 2) {
+      score += 5;
+    }
+
+    // SCARCITY — position talent drying up?
+    if (posRankAmongAvail === 1) {
+      score += 15;
+      if (posAvail.length <= numTeams) reasons.push(`Best ${pos} left — talent thinning`);
+    } else if (posRankAmongAvail <= 3) {
+      score += 10;
+    } else if (posRankAmongAvail <= 8) {
+      score += 5;
+    }
+    if (picksBetween > 0 && posRankAmongAvail <= Math.ceil(picksBetween / 3)) {
+      score += 5;
+      reasons.push('Likely gone next round');
+    }
+
+    // TALENT — projected fantasy points
+    score += Math.min(25, (player.projected_points || 0) / 15);
+
+    // K/DEF penalty early
+    if (['K', 'DEF'].includes(pos) && yourPlayers.length < 8) {
+      score -= 30;
+    }
+
+    return {
+      playerId: player.id,
+      name: player.name,
+      position: pos,
+      team: player.team,
+      consensusRank: rank,
+      projectedPoints: player.projected_points || null,
+      adp: player.adp || null,
+      score: Math.round(Math.max(0, score)),
+      reasons,
+      posRank: posRankAmongAvail,
+      posAvailable: posAvail.length,
+    };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  const needs = Object.entries(NEEDS).map(([pos, need]) => ({
+    position: pos,
+    need,
+    have: posCount[pos] || 0,
+    filled: (posCount[pos] || 0) >= need,
+  }));
+
+  return {
+    recommendations: scored.slice(0, 12),
+    needs,
+    currentPick: totalPicks + 1,
+    yourNextPick: yourNextOverall,
+    picksBetween,
+  };
+}
+
+module.exports = { grade, simulateDraft, recommend, toLetter, ROSTER_SLOTS };
