@@ -453,4 +453,56 @@ function gradeRoster(roster, pool, numTeams = 10) {
   };
 }
 
-module.exports = { grade, simulateDraft, recommend, gradeRoster, toLetter, ROSTER_SLOTS };
+/**
+ * Analyze a trade: compare the total value of players given vs. received.
+ * Value = weighted combo of consensus rank percentile + projected points.
+ *
+ * @param {number[]} givingIds  - Player IDs you're trading away
+ * @param {number[]} gettingIds - Player IDs you're receiving
+ * @param {Array}    pool       - Full player pool
+ * @returns {Object} { giving, getting, verdict, differential }
+ */
+function analyzeTrade(givingIds, gettingIds, pool) {
+  const playerMap = new Map(pool.map((p) => [p.id, p]));
+  const poolSize = pool.length || 300;
+
+  function valuePlayer(p) {
+    if (!p) return { player: null, value: 0, rankScore: 0, ptsScore: 0 };
+    const rank = p.consensusRank || p.rank || poolSize;
+    const pts = p.projected_points || 0;
+    const rankScore = Math.max(0, 100 - (rank / poolSize) * 100);
+    const ptsScore = Math.min(100, (pts / 400) * 100);
+    const value = Math.round(rankScore * 0.6 + ptsScore * 0.4);
+    return {
+      player: { id: p.id, name: p.name, position: p.position, team: p.team, consensusRank: rank, projectedPoints: pts },
+      value,
+      rankScore: Math.round(rankScore),
+      ptsScore: Math.round(ptsScore),
+    };
+  }
+
+  const giving = givingIds.map((id) => valuePlayer(playerMap.get(id)));
+  const getting = gettingIds.map((id) => valuePlayer(playerMap.get(id)));
+
+  const givingTotal = giving.reduce((s, g) => s + g.value, 0);
+  const gettingTotal = getting.reduce((s, g) => s + g.value, 0);
+  const differential = gettingTotal - givingTotal;
+
+  let verdict;
+  if (Math.abs(differential) <= 5) verdict = 'Fair trade';
+  else if (differential > 20) verdict = 'Big win for you';
+  else if (differential > 10) verdict = 'You win this trade';
+  else if (differential > 5) verdict = 'Slight edge for you';
+  else if (differential < -20) verdict = 'Bad deal — you lose significant value';
+  else if (differential < -10) verdict = 'They win this trade';
+  else verdict = 'Slight edge for them';
+
+  return {
+    giving: { players: giving, totalValue: givingTotal },
+    getting: { players: getting, totalValue: gettingTotal },
+    differential,
+    verdict,
+  };
+}
+
+module.exports = { grade, simulateDraft, recommend, gradeRoster, analyzeTrade, toLetter, ROSTER_SLOTS };
