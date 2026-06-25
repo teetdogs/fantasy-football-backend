@@ -135,24 +135,34 @@ router.post('/draft-live', async (req, res) => {
 
     const playerMap = new Map(pool.map((p) => [p.id, p]));
 
-    const picks = draft.picks.map((pick) => {
-      const player = playerMap.get(pick.playerId);
-      return {
-        overall: pick.overall,
-        round: pick.round,
-        pick: pick.pick,
-        teamId: pick.teamId,
-        playerId: pick.playerId,
-        playerName: player?.name || `ESPN #${pick.playerId}`,
-        position: player?.position || '??',
-        team: player?.team || '',
-        keeper: pick.keeper,
-      };
-    });
+    // ESPN pre-creates every draft slot with playerId = -1 once the draft
+    // room opens. Those are empty placeholders, not real picks — filter them
+    // out so we only ever surface players that have actually been drafted.
+    const picks = draft.picks
+      .filter((pick) => pick.playerId > 0)
+      .map((pick) => {
+        const player = playerMap.get(pick.playerId);
+        return {
+          overall: pick.overall,
+          round: pick.round,
+          pick: pick.pick,
+          teamId: pick.teamId,
+          playerId: pick.playerId,
+          playerName: player?.name || `ESPN #${pick.playerId}`,
+          position: player?.position || '??',
+          team: player?.team || '',
+          keeper: pick.keeper,
+        };
+      });
+
+    // The draft room can be open (slots created) before any real pick is made.
+    // Treat it as in-progress when ESPN flags it open or once real picks land.
+    const roomOpen = (draft.picks || []).length > 0;
 
     res.json({
       drafted: draft.drafted,
-      inProgress: picks.length > 0 && !draft.drafted,
+      roomOpen,
+      inProgress: roomOpen && !draft.drafted,
       pickCount: picks.length,
       picks,
     });
