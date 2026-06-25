@@ -121,7 +121,7 @@ async function fetchLeagueTeams(leagueId, swid, espnS2, season = DEFAULT_SEASON)
       teamId: t.id,
       name: `${t.location || ''} ${t.nickname || ''}`.trim() || `Team ${t.id}`,
       abbrev: t.abbrev,
-      owner: owner ? `${owner.firstName} ${owner.lastName}`.trim() : 'Unknown',
+      owner: owner ? `${owner.firstName || ''} ${owner.lastName || ''}`.trim() || 'Unknown' : 'Unknown',
       record: t.record?.overall
         ? { wins: t.record.overall.wins, losses: t.record.overall.losses, ties: t.record.overall.ties }
         : null,
