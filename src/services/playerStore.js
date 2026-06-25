@@ -85,4 +85,12 @@ function getMeta() {
   };
 }
 
+// Proactive background refresh — don't rely on traffic to keep data fresh.
+// Runs every TTL interval so roster cuts, injuries, and projections stay
+// current even if nobody visits for a while.
+setInterval(() => {
+  console.log('[playerStore] background refresh triggered');
+  refresh().catch((err) => console.error('[playerStore] background refresh failed:', err.message));
+}, TTL_MS);
+
 module.exports = { getPlayers, refresh, getMeta };
