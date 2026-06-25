@@ -1,6 +1,7 @@
 const express = require('express');
 const leagueService = require('../services/espnLeagueService');
 const playerStore = require('../services/playerStore');
+const seasonManager = require('../services/seasonManager');
 
 const router = express.Router();
 
@@ -116,64 +117,23 @@ router.post('/debug', async (req, res) => {
 });
 
 /**
- * POST /api/league/spike-season
- * READ-ONLY validation: confirm ESPN returns team rosters + free agents.
- * Proves the data path before we build Season Manager features on top.
- * Body: { leagueId, swid, espnS2 }
+ * POST /api/league/my-team
+ * Season Manager: returns the user's enriched roster, waiver-wire upgrade
+ * suggestions, and drop candidates.
+ * Body: { leagueId, swid, espnS2, teamId }
  */
-router.post('/spike-season', async (req, res) => {
+router.post('/my-team', async (req, res) => {
   try {
-    const { leagueId, swid, espnS2 } = req.body;
-    if (!leagueId || !swid || !espnS2) {
-      return res.status(400).json({ error: 'leagueId, swid, and espnS2 are all required' });
+    const { leagueId, swid, espnS2, teamId } = req.body;
+    if (!leagueId || !swid || !espnS2 || !teamId) {
+      return res.status(400).json({ error: 'leagueId, swid, espnS2, and teamId are all required' });
     }
 
-    const season = process.env.SEASON || '2026';
-    const base = `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${season}/segments/0/leagues/${leagueId}`;
-    const cookie = `SWID=${swid}; espn_s2=${espnS2}`;
-
-    // 1) All team rosters
-    const rosterRes = await fetch(`${base}?view=mRoster&view=mTeam`, {
-      headers: { Cookie: cookie, 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-    });
-    const rosterData = await rosterRes.json();
-
-    // 2) Free agents (not rostered) — needs the x-fantasy-filter header
-    const faFilter = JSON.stringify({
-      players: {
-        filterStatus: { value: ['FREEAGENT', 'WAIVERS'] },
-        limit: 50,
-        sortPercOwned: { sortAsc: false, sortPriority: 1 },
-      },
-    });
-    const faRes = await fetch(`${base}?view=kona_player_info`, {
-      headers: { Cookie: cookie, 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', 'x-fantasy-filter': faFilter },
-    });
-    const faData = await faRes.json();
-
-    const teams = (rosterData.teams || []).map((t) => ({
-      teamId: t.id,
-      rosterCount: t.roster?.entries?.length || 0,
-      samplePlayerIds: (t.roster?.entries || []).slice(0, 3).map((e) => e.playerId),
-    }));
-
-    const freeAgents = (faData.players || []).slice(0, 10).map((p) => ({
-      id: p.id,
-      name: p.player?.fullName,
-      percentOwned: Math.round(p.player?.ownership?.percentOwned || 0),
-    }));
-
-    res.json({
-      rosterStatus: rosterRes.status,
-      teamsWithRosters: teams.filter((t) => t.rosterCount > 0).length,
-      totalTeams: teams.length,
-      sampleTeams: teams.slice(0, 3),
-      freeAgentStatus: faRes.status,
-      freeAgentsReturned: (faData.players || []).length,
-      sampleFreeAgents: freeAgents,
-    });
+    const result = await seasonManager.buildMyTeam({ leagueId, swid, espnS2, teamId: Number(teamId) });
+    res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const status = err.status || 500;
+    res.status(status).json({ error: err.message });
   }
 });
 

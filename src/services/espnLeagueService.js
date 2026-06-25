@@ -151,6 +151,66 @@ async function fetchDraftResults(leagueId, swid, espnS2, season = DEFAULT_SEASON
   };
 }
 
+// ESPN lineup slot id → our position label. Bench (20) and IR (21) mean the
+// player is not in a starting slot.
+const POSITION_BY_SLOT = {
+  0: 'QB', 2: 'RB', 4: 'WR', 6: 'TE', 16: 'DEF', 17: 'K', 23: 'FLEX',
+};
+
+/**
+ * Fetch every team's roster. Returns a map of teamId → array of
+ * { playerId, lineupSlotId, onBench } entries.
+ */
+async function fetchAllRosters(leagueId, swid, espnS2, season = DEFAULT_SEASON) {
+  const data = await leagueGet(leagueId, season, swid, espnS2, ['mRoster', 'mTeam']);
+
+  const rosters = {};
+  for (const team of data.teams || []) {
+    rosters[team.id] = (team.roster?.entries || []).map((e) => ({
+      playerId: e.playerId,
+      lineupSlotId: e.lineupSlotId,
+      onBench: e.lineupSlotId === 20 || e.lineupSlotId === 21,
+    }));
+  }
+  return rosters;
+}
+
+/**
+ * Fetch the league's free agents (unrostered players), most-owned first.
+ * Uses the x-fantasy-filter header that ESPN's player query requires.
+ */
+async function fetchFreeAgents(leagueId, swid, espnS2, season = DEFAULT_SEASON, limit = 100) {
+  const url = `${HOST}/${season}/segments/0/leagues/${leagueId}?view=kona_player_info`;
+  const filter = JSON.stringify({
+    players: {
+      filterStatus: { value: ['FREEAGENT', 'WAIVERS'] },
+      limit,
+      sortPercOwned: { sortAsc: false, sortPriority: 1 },
+    },
+  });
+
+  const res = await fetch(url, {
+    headers: {
+      Cookie: `SWID=${swid}; espn_s2=${espnS2}`,
+      'User-Agent': 'Mozilla/5.0',
+      Accept: 'application/json',
+      'x-fantasy-filter': filter,
+    },
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    throw Object.assign(new Error('Invalid or expired ESPN credentials. Re-copy your cookies from espn.com.'), { status: 401 });
+  }
+  if (!res.ok) throw new Error(`ESPN returned ${res.status} ${res.statusText}`);
+
+  const data = await res.json();
+  return (data.players || []).map((p) => ({
+    playerId: p.id,
+    name: p.player?.fullName,
+    percentOwned: Math.round(p.player?.ownership?.percentOwned || 0),
+  }));
+}
+
 /**
  * Quick connectivity check — validates credentials + league access.
  */
@@ -163,5 +223,8 @@ module.exports = {
   fetchLeagueSettings,
   fetchLeagueTeams,
   fetchDraftResults,
+  fetchAllRosters,
+  fetchFreeAgents,
   testConnection,
+  POSITION_BY_SLOT,
 };
