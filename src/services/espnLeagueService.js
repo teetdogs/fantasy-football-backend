@@ -119,7 +119,7 @@ async function fetchLeagueTeams(leagueId, swid, espnS2, season = DEFAULT_SEASON)
     const owner = members.get(t.primaryOwner);
     return {
       teamId: t.id,
-      name: `${t.location || ''} ${t.nickname || ''}`.trim() || `Team ${t.id}`,
+      name: `${t.location || ''} ${t.nickname || ''}`.trim() || t.name || `Team ${t.id}`,
       abbrev: t.abbrev,
       owner: owner ? `${owner.firstName || ''} ${owner.lastName || ''}`.trim() || 'Unknown' : 'Unknown',
       record: t.record?.overall
