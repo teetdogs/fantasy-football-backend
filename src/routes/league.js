@@ -138,6 +138,26 @@ router.post('/my-team', async (req, res) => {
 });
 
 /**
+ * POST /api/league/power-rankings
+ * Grade every team in the league and return a sorted leaderboard.
+ * Body: { leagueId, swid, espnS2 }
+ */
+router.post('/power-rankings', async (req, res) => {
+  try {
+    const { leagueId, swid, espnS2 } = req.body;
+    if (!leagueId || !swid || !espnS2) {
+      return res.status(400).json({ error: 'leagueId, swid, and espnS2 are all required' });
+    }
+
+    const result = await seasonManager.leaguePowerRankings({ leagueId, swid, espnS2 });
+    res.json(result);
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/league/draft-live
  * Fetch draft picks enriched with player pool data (names, positions, teams).
  * Designed to be polled during a live draft.

@@ -129,4 +129,40 @@ async function buildMyTeam({ leagueId, swid, espnS2, teamId }) {
   };
 }
 
-module.exports = { buildMyTeam };
+/**
+ * Power-rank every team in the league.
+ * Runs gradeRoster on each team's roster and returns a sorted leaderboard.
+ */
+async function leaguePowerRankings({ leagueId, swid, espnS2 }) {
+  const [rosters, teams, pool] = await Promise.all([
+    leagueService.fetchAllRosters(leagueId, swid, espnS2),
+    leagueService.fetchLeagueTeams(leagueId, swid, espnS2),
+    playerStore.getPlayers(),
+  ]);
+
+  const playerMap = new Map(pool.map((p) => [p.id, p]));
+  const numTeams = teams.length || 10;
+  const teamMap = new Map(teams.map((t) => [t.teamId, t]));
+
+  const rankings = Object.entries(rosters).map(([teamIdStr, entries]) => {
+    const teamId = Number(teamIdStr);
+    const rosterPlayers = entries.map((e) => playerMap.get(e.playerId)).filter(Boolean);
+    const grade = gradeRoster(rosterPlayers, pool, numTeams);
+    const team = teamMap.get(teamId);
+    return {
+      teamId,
+      teamName: team?.name || `Team ${teamId}`,
+      owner: team?.owner || 'Unknown',
+      overall: grade.overall,
+      positions: grade.positions,
+      rosterSize: entries.length,
+    };
+  });
+
+  rankings.sort((a, b) => b.overall.score - a.overall.score);
+  rankings.forEach((r, i) => { r.rank = i + 1; });
+
+  return { rankings };
+}
+
+module.exports = { buildMyTeam, leaguePowerRankings };
