@@ -85,6 +85,37 @@ router.post('/draft', async (req, res) => {
 });
 
 /**
+ * POST /api/league/debug
+ * Return raw ESPN team + member data for debugging.
+ * Body: { leagueId, swid, espnS2 }
+ */
+router.post('/debug', async (req, res) => {
+  try {
+    const { leagueId, swid, espnS2 } = req.body;
+    if (!leagueId || !swid || !espnS2) {
+      return res.status(400).json({ error: 'leagueId, swid, and espnS2 are all required' });
+    }
+
+    const season = process.env.SEASON || '2026';
+    const url = `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${season}/segments/0/leagues/${leagueId}?view=mTeam`;
+    const r = await fetch(url, {
+      headers: {
+        Cookie: `SWID=${swid}; espn_s2=${espnS2}`,
+        'User-Agent': 'Mozilla/5.0',
+        Accept: 'application/json',
+      },
+    });
+    const raw = await r.json();
+    res.json({
+      teams: (raw.teams || []).map((t) => ({ id: t.id, location: t.location, nickname: t.nickname, abbrev: t.abbrev, name: t.name, primaryOwner: t.primaryOwner })),
+      members: (raw.members || []).map((m) => ({ id: m.id, firstName: m.firstName, lastName: m.lastName, displayName: m.displayName })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/league/draft-live
  * Fetch draft picks enriched with player pool data (names, positions, teams).
  * Designed to be polled during a live draft.
