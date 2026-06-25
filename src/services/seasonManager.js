@@ -6,6 +6,7 @@
 
 const leagueService = require('./espnLeagueService');
 const playerStore = require('./playerStore');
+const { gradeRoster } = require('./gradingEngine');
 
 // How many starters each position typically needs — used to decide whether a
 // roster spot is "thin" and worth upgrading via waivers.
@@ -111,11 +112,19 @@ async function buildMyTeam({ leagueId, swid, espnS2, teamId }) {
     .sort((a, b) => (b.consensusRank || 0) - (a.consensusRank || 0)) // worst rank first
     .slice(0, 6);
 
+  // Grade the roster — resolve player IDs back to full pool objects for the grader
+  const rosterPoolPlayers = myEntries
+    .map((e) => playerMap.get(e.playerId))
+    .filter(Boolean);
+  const numTeams = Object.keys(rosters).length || 10;
+  const grade = gradeRoster(rosterPoolPlayers, pool, numTeams);
+
   return {
     teamId,
     roster,
     waivers,
     drops,
+    grade,
     counts: Object.fromEntries(Object.entries(myByPosition).map(([pos, arr]) => [pos, arr.length])),
   };
 }

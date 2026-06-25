@@ -305,4 +305,114 @@ function recommend(draftState, pool) {
   };
 }
 
-module.exports = { grade, simulateDraft, recommend, toLetter, ROSTER_SLOTS };
+// Position weights for overall grade — premium positions matter more.
+const POS_WEIGHT = { QB: 1.0, RB: 1.3, WR: 1.3, TE: 0.9, K: 0.3, DEF: 0.3 };
+
+/**
+ * Grade a roster's overall strength against the player pool.
+ * Unlike the draft grader (which scores value vs. pick slot), this scores
+ * absolute quality: where do your players rank in the full pool?
+ *
+ * @param {Array} roster   - Array of player objects from the pool
+ * @param {Array} pool     - Full player pool for context
+ * @param {number} numTeams - League size (used to set expectations)
+ * @returns {Object} { overall, positions, starters, summary }
+ */
+function gradeRoster(roster, pool, numTeams = 10) {
+  if (!roster.length) {
+    return { overall: { score: 0, ...toLetter(0) }, positions: {}, starters: [], summary: 'No players on roster.' };
+  }
+
+  // Build positional pools for percentile comparison
+  const posPools = {};
+  for (const p of pool) {
+    if (!posPools[p.position]) posPools[p.position] = [];
+    posPools[p.position].push(p);
+  }
+
+  // Expected rank for a "league average" starter at each position:
+  // In a 10-team league, the average starting QB is roughly QB10.
+  const STARTER_NEEDS = { QB: 1, RB: 2, WR: 3, TE: 1, K: 1, DEF: 1 };
+
+  // Group roster by position
+  const rosterByPos = {};
+  for (const p of roster) {
+    if (!rosterByPos[p.position]) rosterByPos[p.position] = [];
+    rosterByPos[p.position].push(p);
+  }
+
+  // Score each position group
+  const positions = {};
+  let weightedSum = 0;
+  let totalWeight = 0;
+
+  for (const [pos, need] of Object.entries(STARTER_NEEDS)) {
+    const mine = (rosterByPos[pos] || [])
+      .slice()
+      .sort((a, b) => (a.consensusRank || 999) - (b.consensusRank || 999));
+    const posPool = posPools[pos] || [];
+    const poolSize = posPool.length || 1;
+
+    if (!mine.length) {
+      positions[pos] = { score: 0, ...toLetter(0), count: 0, topPlayer: null, depth: 'empty' };
+      continue;
+    }
+
+    // Score starters by percentile within the position pool.
+    // Being QB1 in a pool of 30 QBs = 100th percentile.
+    const starters = mine.slice(0, need);
+    const starterScores = starters.map((p) => {
+      const rank = p.consensusRank || p.rank || poolSize;
+      const posIdx = posPool.findIndex((pp) => pp.id === p.id);
+      const posRank = posIdx >= 0 ? posIdx + 1 : poolSize;
+      // Expected rank = numTeams * slot (e.g., RB1 expected around numTeams*1)
+      // Being better than expected = bonus, worse = penalty
+      const expectedRank = numTeams * (starters.indexOf(p) + 1);
+      const delta = expectedRank - posRank;
+      return Math.max(0, Math.min(100, 60 + delta * 2.5));
+    });
+
+    const avgScore = Math.round(starterScores.reduce((s, v) => s + v, 0) / starterScores.length);
+
+    // Depth bonus: having quality backups
+    const benchPlayers = mine.slice(need);
+    let depth = 'thin';
+    if (benchPlayers.length >= 2) depth = 'deep';
+    else if (benchPlayers.length >= 1) depth = 'ok';
+
+    const topPlayer = mine[0];
+    const weight = POS_WEIGHT[pos] || 1;
+    weightedSum += avgScore * weight;
+    totalWeight += weight;
+
+    positions[pos] = {
+      score: avgScore,
+      ...toLetter(avgScore),
+      count: mine.length,
+      topPlayer: topPlayer ? { name: topPlayer.name, rank: topPlayer.consensusRank || topPlayer.rank } : null,
+      depth,
+    };
+  }
+
+  const overallScore = Math.round(totalWeight ? weightedSum / totalWeight : 0);
+
+  // Build summary
+  const sorted = Object.entries(positions).sort((a, b) => b[1].score - a[1].score);
+  const strengths = sorted.filter(([, v]) => v.score >= 75).map(([k]) => k);
+  const weaknesses = sorted.filter(([, v]) => v.score > 0 && v.score < 55).map(([k]) => k);
+  const thinSpots = sorted.filter(([, v]) => v.depth === 'thin' && v.count > 0).map(([k]) => k);
+
+  let summary = '';
+  if (strengths.length) summary += `Strong at ${strengths.join(', ')}. `;
+  if (weaknesses.length) summary += `Needs improvement at ${weaknesses.join(', ')}. `;
+  if (thinSpots.length) summary += `Thin depth at ${thinSpots.join(', ')} — watch waivers. `;
+  if (!summary) summary = 'Balanced roster across positions.';
+
+  return {
+    overall: { score: overallScore, ...toLetter(overallScore) },
+    positions,
+    summary: summary.trim(),
+  };
+}
+
+module.exports = { grade, simulateDraft, recommend, gradeRoster, toLetter, ROSTER_SLOTS };
