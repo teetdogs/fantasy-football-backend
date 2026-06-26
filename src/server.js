@@ -53,6 +53,7 @@ app.use('/api/rankings', require('./routes/rankings'));
 app.use('/api/algorithms', require('./routes/algorithms'));
 app.use('/api/draft', require('./routes/draft'));
 app.use('/api/league', require('./routes/league'));
+app.use('/api/news', require('./routes/news'));
 
 // Error handling middleware
 app.use((err, req, res, next) => {
