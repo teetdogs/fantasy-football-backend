@@ -8,8 +8,16 @@ const Parser = require('rss-parser');
 const rss = new Parser({ timeout: 8000 });
 
 const ESPN_NEWS_URL = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/news';
-const ESPN_TEAM_URL = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams';
 const CACHE_TTL = 10 * 60 * 1000;
+
+// ESPN's stable numeric team IDs, keyed by abbreviation. Used by the team
+// news query (?team={id}).
+const ESPN_TEAM_IDS = {
+  ATL: 1, BUF: 2, CHI: 3, CIN: 4, CLE: 5, DAL: 6, DEN: 7, DET: 8,
+  GB: 9, TEN: 10, IND: 11, KC: 12, LV: 13, LAR: 14, MIA: 15, MIN: 16,
+  NE: 17, NO: 18, NYG: 19, NYJ: 20, PHI: 21, ARI: 22, PIT: 23, LAC: 24,
+  SF: 25, SEA: 26, TB: 27, WSH: 28, CAR: 29, JAX: 30, BAL: 33, HOU: 34,
+};
 
 const RSS_SOURCES = [
   { name: 'NFL.com', url: 'https://www.nfl.com/feeds-rs/headlines/news.rss', id: 'nfl-com' },
@@ -95,8 +103,12 @@ async function fetchTeamNews(teamAbbrev) {
     return cached.articles;
   }
 
-  // ESPN team news endpoint
-  const res = await fetch(`${ESPN_TEAM_URL}/${teamAbbrev}/news`);
+  // ESPN's team news lives at ?team={numericId}, not /teams/{abbrev}/news
+  // (the path form returns an empty {}). Map abbrev → ESPN team id.
+  const teamId = ESPN_TEAM_IDS[teamAbbrev];
+  if (!teamId) return [];
+
+  const res = await fetch(`${ESPN_NEWS_URL}?team=${teamId}&limit=20`);
   if (!res.ok) return [];
   const data = await res.json();
 
