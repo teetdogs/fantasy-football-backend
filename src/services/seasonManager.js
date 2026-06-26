@@ -6,7 +6,7 @@
 
 const leagueService = require('./espnLeagueService');
 const playerStore = require('./playerStore');
-const { gradeRoster } = require('./gradingEngine');
+const { gradeRoster, makeTradeValuer } = require('./gradingEngine');
 
 // How many starters each position typically needs — used to decide whether a
 // roster spot is "thin" and worth upgrading via waivers.
@@ -261,13 +261,9 @@ async function suggestTrades({ leagueId, swid, espnS2, teamId }) {
     return byPos;
   }
 
-  function playerValue(p) {
-    const rank = p.consensusRank || p.rank || 999;
-    const pts = p.projected_points || 0;
-    const rankScore = Math.max(0, 100 - (rank / 300) * 100);
-    const ptsScore = Math.min(100, (pts / 400) * 100);
-    return Math.round(rankScore * 0.6 + ptsScore * 0.4);
-  }
+  // Use the shared VOR + scarcity valuer so suggestions match the analyzer.
+  const valuer = makeTradeValuer(pool);
+  const playerValue = (p) => valuer(p)?.value || 0;
 
   const myEntries = rosters[teamId] || [];
   const myByPos = rosterByPos(myEntries);

@@ -453,56 +453,116 @@ function gradeRoster(roster, pool, numTeams = 10) {
   };
 }
 
+// ——— Trade valuation model ———
+// Position scarcity multipliers (tuned for 1-QB PPR; moderate so they nudge,
+// not distort). RB/TE bumped for steeper talent drop-off; QB/K/DEF damped.
+const TRADE_SCARCITY = { QB: 0.92, RB: 1.12, WR: 1.0, TE: 1.10, K: 0.78, DEF: 0.78 };
+
+// Replacement-level rank per position (~12-team starter demand). VOR is
+// measured against the projected points of the player at this position rank.
+const REPLACEMENT_RANK = { QB: 14, RB: 32, WR: 38, TE: 14, K: 14, DEF: 14 };
+
+// Each extra player in a package is discounted — roster spots are finite and
+// you can't start everyone, so consolidating into fewer studs has real value.
+const CONSOLIDATION_PENALTY = 0.08;
+
 /**
- * Analyze a trade: compare the total value of players given vs. received.
- * Value = weighted combo of consensus rank percentile + projected points.
- *
- * @param {number[]} givingIds  - Player IDs you're trading away
- * @param {number[]} gettingIds - Player IDs you're receiving
- * @param {Array}    pool       - Full player pool
- * @returns {Object} { giving, getting, verdict, differential }
+ * Build a trade valuer bound to a player pool. Returns value(player) → details.
+ * Value blends rank percentile with Value-Over-Replacement, then applies a
+ * positional scarcity multiplier. Shared by analyzeTrade + trade suggestions.
  */
-function analyzeTrade(givingIds, gettingIds, pool) {
-  const playerMap = new Map(pool.map((p) => [p.id, p]));
+function makeTradeValuer(pool) {
   const poolSize = pool.length || 300;
 
-  function valuePlayer(p) {
-    if (!p) return { player: null, value: 0, rankScore: 0, ptsScore: 0 };
-    const rank = p.consensusRank || p.rank || poolSize;
-    const pts = p.projected_points || 0;
-    const rankScore = Math.max(0, 100 - (rank / poolSize) * 100);
-    const ptsScore = Math.min(100, (pts / 400) * 100);
-    const value = Math.round(rankScore * 0.6 + ptsScore * 0.4);
-    return {
-      player: { id: p.id, name: p.name, position: p.position, team: p.team, consensusRank: rank, projectedPoints: pts },
-      value,
-      rankScore: Math.round(rankScore),
-      ptsScore: Math.round(ptsScore),
-    };
+  // Per-position projection baselines for VOR.
+  const byPos = {};
+  for (const p of pool) {
+    (byPos[p.position] = byPos[p.position] || []).push(p);
+  }
+  const baseline = {};
+  for (const [pos, arr] of Object.entries(byPos)) {
+    arr.sort((a, b) => (b.projected_points || 0) - (a.projected_points || 0));
+    const idx = Math.min(REPLACEMENT_RANK[pos] || 14, arr.length - 1);
+    baseline[pos] = arr[idx]?.projected_points || 0;
   }
 
-  const giving = givingIds.map((id) => valuePlayer(playerMap.get(id)));
-  const getting = gettingIds.map((id) => valuePlayer(playerMap.get(id)));
+  return function value(p) {
+    if (!p) return null;
+    const rank = p.consensusRank || p.rank || poolSize;
+    const proj = p.projected_points || 0;
+    const scar = TRADE_SCARCITY[p.position] || 1;
 
-  const givingTotal = giving.reduce((s, g) => s + g.value, 0);
-  const gettingTotal = getting.reduce((s, g) => s + g.value, 0);
-  const differential = gettingTotal - givingTotal;
+    // Rank percentile: always available, anchors the value.
+    const rankScore = Math.max(0, 100 - (rank / poolSize) * 100);
+    // VOR: points above replacement at the position (≈0–200), scaled to ~0–100.
+    const vor = Math.max(0, proj - (baseline[p.position] || 0));
+    const vorScore = Math.min(100, vor / 1.8);
 
-  let verdict;
-  if (Math.abs(differential) <= 5) verdict = 'Fair trade';
-  else if (differential > 20) verdict = 'Big win for you';
-  else if (differential > 10) verdict = 'You win this trade';
-  else if (differential > 5) verdict = 'Slight edge for you';
-  else if (differential < -20) verdict = 'Bad deal — you lose significant value';
-  else if (differential < -10) verdict = 'They win this trade';
-  else verdict = 'Slight edge for them';
+    const blended = rankScore * 0.55 + vorScore * 0.45;
+    const val = Math.round(blended * scar);
 
-  return {
-    giving: { players: giving, totalValue: givingTotal },
-    getting: { players: getting, totalValue: gettingTotal },
-    differential,
-    verdict,
+    return {
+      player: { id: p.id, name: p.name, position: p.position, team: p.team, consensusRank: rank, projectedPoints: proj },
+      value: val,
+      rankScore: Math.round(rankScore),
+      vor: Math.round(vor),
+      scarcity: scar,
+    };
   };
 }
 
-module.exports = { grade, simulateDraft, recommend, gradeRoster, analyzeTrade, toLetter, ROSTER_SLOTS };
+// Discount a package's raw value for extra players (consolidation premium).
+function packageValue(valued) {
+  const raw = valued.reduce((s, v) => s + v.value, 0);
+  const discount = Math.max(0.6, 1 - CONSOLIDATION_PENALTY * Math.max(0, valued.length - 1));
+  return { raw, adjusted: Math.round(raw * discount), discount };
+}
+
+/**
+ * Analyze a trade using VOR + positional scarcity + consolidation adjustment.
+ * @param {number[]} givingIds, gettingIds - player IDs
+ * @param {Array} pool - full player pool
+ */
+function analyzeTrade(givingIds, gettingIds, pool) {
+  const playerMap = new Map(pool.map((p) => [p.id, p]));
+  const valuer = makeTradeValuer(pool);
+
+  const giving = givingIds.map((id) => valuer(playerMap.get(id))).filter(Boolean);
+  const getting = gettingIds.map((id) => valuer(playerMap.get(id))).filter(Boolean);
+
+  const givePkg = packageValue(giving);
+  const getPkg = packageValue(getting);
+  const differential = getPkg.adjusted - givePkg.adjusted;
+
+  // Scale-relative verdict so multi-player deals judge fairly.
+  const ref = Math.max(givePkg.adjusted, getPkg.adjusted, 1);
+  const pct = differential / ref;
+
+  let verdict;
+  if (Math.abs(pct) < 0.07) verdict = 'Fair trade';
+  else if (pct >= 0.35) verdict = 'Big win for you';
+  else if (pct >= 0.18) verdict = 'You win this trade';
+  else if (pct > 0) verdict = 'Slight edge for you';
+  else if (pct <= -0.35) verdict = 'Lopsided — you lose big';
+  else if (pct <= -0.18) verdict = 'They win this trade';
+  else verdict = 'Slight edge for them';
+
+  // Contextual notes explaining the weighting.
+  const notes = [];
+  if (giving.length !== getting.length) {
+    const more = giving.length > getting.length ? 'give' : 'get';
+    notes.push(`You ${more} more players — packages are discounted ${Math.round(CONSOLIDATION_PENALTY * 100)}% per extra player since you can only start so many.`);
+  }
+  const scarceGet = getting.find((g) => g.scarcity > 1.05 && g.value >= 50);
+  if (scarceGet) notes.push(`${scarceGet.player.name} carries a positional-scarcity premium (${scarceGet.player.position}).`);
+
+  return {
+    giving: { players: giving, totalValue: givePkg.adjusted, rawValue: givePkg.raw },
+    getting: { players: getting, totalValue: getPkg.adjusted, rawValue: getPkg.raw },
+    differential,
+    verdict,
+    notes,
+  };
+}
+
+module.exports = { grade, simulateDraft, recommend, gradeRoster, analyzeTrade, makeTradeValuer, toLetter, ROSTER_SLOTS };
