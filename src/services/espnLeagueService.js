@@ -131,33 +131,6 @@ async function fetchLeagueTeams(leagueId, swid, espnS2, season = DEFAULT_SEASON)
 }
 
 /**
- * Fetch draft results (picks already made).
- */
-async function fetchDraftResults(leagueId, swid, espnS2, season = DEFAULT_SEASON) {
-  const data = await leagueGet(leagueId, season, swid, espnS2, ['mDraftDetail']);
-
-  const picks = (data.draftDetail?.picks || []).map((p) => ({
-    round: p.roundId,
-    pick: p.roundPickNumber,
-    overall: p.overallPickNumber,
-    teamId: p.teamId,
-    playerId: p.playerId,
-    keeper: p.keeper || false,
-  }));
-
-  return {
-    drafted: data.draftDetail?.drafted || false,
-    picks,
-  };
-}
-
-// ESPN lineup slot id → our position label. Bench (20) and IR (21) mean the
-// player is not in a starting slot.
-const POSITION_BY_SLOT = {
-  0: 'QB', 2: 'RB', 4: 'WR', 6: 'TE', 16: 'DEF', 17: 'K', 23: 'FLEX',
-};
-
-/**
  * Fetch every team's roster. Returns a map of teamId → array of
  * { playerId, lineupSlotId, onBench } entries.
  */
@@ -211,20 +184,9 @@ async function fetchFreeAgents(leagueId, swid, espnS2, season = DEFAULT_SEASON, 
   }));
 }
 
-/**
- * Quick connectivity check — validates credentials + league access.
- */
-async function testConnection(leagueId, swid, espnS2, season = DEFAULT_SEASON) {
-  const settings = await fetchLeagueSettings(leagueId, swid, espnS2, season);
-  return { ok: true, leagueName: settings.name, size: settings.size, format: settings.scoringFormat };
-}
-
 module.exports = {
   fetchLeagueSettings,
   fetchLeagueTeams,
-  fetchDraftResults,
   fetchAllRosters,
   fetchFreeAgents,
-  testConnection,
-  POSITION_BY_SLOT,
 };

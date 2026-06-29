@@ -33,48 +33,6 @@ router.post('/grade', async (req, res) => {
 });
 
 /**
- * POST /api/draft/simulate
- * Simulate a snake draft with AI opponents.
- * Body: { yourSlot: 1, numTeams: 12, numRounds: 15, yourPicks: [playerId, ...] }
- */
-router.post('/simulate', async (req, res) => {
-  try {
-    const { yourSlot = 1, numTeams = 12, numRounds = 15, yourPicks = [] } = req.body;
-
-    const pool = await playerStore.getPlayers();
-    const result = gradingEngine.simulateDraft(yourSlot, numTeams, numRounds, yourPicks, pool);
-
-    // Also grade the user's picks so far
-    const playerMap = new Map(pool.map((p) => [p.id, p]));
-    const resolved = yourPicks.map((id) => playerMap.get(id)).filter(Boolean);
-    const gradeResult = resolved.length ? gradingEngine.grade(resolved, pool) : null;
-
-    res.json({ ...result, grade: gradeResult });
-  } catch (err) {
-    console.error('Error simulating draft:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * POST /api/draft/recommend
- * Return AI-scored pick recommendations based on the current draft state.
- * Body: { yourSlot, numTeams, picks: [{ playerId, teamSlot }, ...] }
- */
-router.post('/recommend', async (req, res) => {
-  try {
-    const { yourSlot = 1, numTeams = 12, picks = [] } = req.body;
-
-    const pool = await playerStore.getPlayers();
-    const result = gradingEngine.recommend({ yourSlot, numTeams, picks }, pool);
-    res.json(result);
-  } catch (err) {
-    console.error('Error generating recommendations:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
  * POST /api/draft/trade
  * Analyze a trade: compare total value of players given vs. received.
  * Body: { giving: [playerId, ...], getting: [playerId, ...], league?: { scoringFormat, superflex, numTeams, teReceptionPremium } }
