@@ -35,7 +35,7 @@ async function leagueGet(leagueId, season, swid, espnS2, views) {
 
 const SLOT_MAP = {
   0: 'QB', 2: 'RB', 4: 'WR', 6: 'TE', 16: 'DEF', 17: 'K',
-  20: 'Bench', 21: 'IR', 23: 'FLEX',
+  20: 'Bench', 21: 'IR', 23: 'FLEX', 7: 'SUPERFLEX',
 };
 
 function parseRosterSlots(settings) {

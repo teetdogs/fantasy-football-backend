@@ -454,25 +454,58 @@ function gradeRoster(roster, pool, numTeams = 10) {
 }
 
 // ——— Trade valuation model ———
-// Position scarcity multipliers (tuned for 1-QB PPR; moderate so they nudge,
-// not distort). RB/TE bumped for steeper talent drop-off; QB/K/DEF damped.
-const TRADE_SCARCITY = { QB: 0.92, RB: 1.12, WR: 1.0, TE: 1.10, K: 0.78, DEF: 0.78 };
+// Base scarcity multipliers (1-QB PPR default; moderate so they nudge, not
+// distort). League context shifts these — see leagueScarcity().
+const BASE_SCARCITY = { QB: 0.92, RB: 1.12, WR: 1.0, TE: 1.10, K: 0.78, DEF: 0.78 };
 
-// Replacement-level rank per position (~12-team starter demand). VOR is
-// measured against the projected points of the player at this position rank.
-const REPLACEMENT_RANK = { QB: 14, RB: 32, WR: 38, TE: 14, K: 14, DEF: 14 };
+// Replacement-level rank per position at a 12-team baseline. Scaled by league
+// size and superflex in leagueReplacement().
+const BASE_REPLACEMENT_RANK = { QB: 14, RB: 32, WR: 38, TE: 14, K: 14, DEF: 14 };
 
 // Each extra player in a package is discounted — roster spots are finite and
 // you can't start everyone, so consolidating into fewer studs has real value.
 const CONSOLIDATION_PENALTY = 0.08;
 
 /**
- * Build a trade valuer bound to a player pool. Returns value(player) → details.
- * Value blends rank percentile with Value-Over-Replacement, then applies a
- * positional scarcity multiplier. Shared by analyzeTrade + trade suggestions.
+ * Position scarcity multipliers adjusted for league context.
+ * ctx: { scoringFormat, superflex, teReceptionPremium }
  */
-function makeTradeValuer(pool) {
+function leagueScarcity(ctx = {}) {
+  const m = { ...BASE_SCARCITY };
+  const fmt = String(ctx.scoringFormat || 'PPR');
+  if (/standard/i.test(fmt)) {
+    m.RB = 1.20; m.WR = 0.92; m.TE = 1.05;        // no PPR → RB-heavy
+  } else if (/half/i.test(fmt)) {
+    m.RB = 1.14; m.WR = 0.98; m.TE = 1.08;
+  } else {
+    m.RB = 1.08; m.WR = 1.03; m.TE = 1.12;        // full PPR lifts pass-catchers
+  }
+  if (ctx.superflex) m.QB = 1.35;                  // QBs become premium assets
+  if (ctx.teReceptionPremium) m.TE += 0.12;
+  return m;
+}
+
+/** Replacement ranks scaled by league size + superflex. */
+function leagueReplacement(ctx = {}) {
+  const factor = (ctx.numTeams || 12) / 12;
+  const r = {};
+  for (const [pos, base] of Object.entries(BASE_REPLACEMENT_RANK)) {
+    r[pos] = Math.max(5, Math.round(base * factor));
+  }
+  if (ctx.superflex) r.QB = Math.round(r.QB * 1.8); // far more QBs get started
+  return r;
+}
+
+/**
+ * Build a trade valuer bound to a player pool + league context.
+ * Value blends rank percentile with Value-Over-Replacement, then applies a
+ * league-aware positional scarcity multiplier. Shared by analyzeTrade +
+ * trade suggestions.
+ */
+function makeTradeValuer(pool, ctx = {}) {
   const poolSize = pool.length || 300;
+  const scarcity = leagueScarcity(ctx);
+  const replacementRank = leagueReplacement(ctx);
 
   // Per-position projection baselines for VOR.
   const byPos = {};
@@ -482,7 +515,7 @@ function makeTradeValuer(pool) {
   const baseline = {};
   for (const [pos, arr] of Object.entries(byPos)) {
     arr.sort((a, b) => (b.projected_points || 0) - (a.projected_points || 0));
-    const idx = Math.min(REPLACEMENT_RANK[pos] || 14, arr.length - 1);
+    const idx = Math.min(replacementRank[pos] || 14, arr.length - 1);
     baseline[pos] = arr[idx]?.projected_points || 0;
   }
 
@@ -490,7 +523,7 @@ function makeTradeValuer(pool) {
     if (!p) return null;
     const rank = p.consensusRank || p.rank || poolSize;
     const proj = p.projected_points || 0;
-    const scar = TRADE_SCARCITY[p.position] || 1;
+    const scar = scarcity[p.position] || 1;
 
     // Rank percentile: always available, anchors the value.
     const rankScore = Math.max(0, 100 - (rank / poolSize) * 100);
@@ -518,14 +551,25 @@ function packageValue(valued) {
   return { raw, adjusted: Math.round(raw * discount), discount };
 }
 
+/** Human-readable summary of the league context the trade was valued under. */
+function describeContext(ctx = {}) {
+  const parts = [];
+  if (ctx.numTeams) parts.push(`${ctx.numTeams}-team`);
+  parts.push(String(ctx.scoringFormat || 'PPR'));
+  if (ctx.superflex) parts.push('Superflex');
+  if (ctx.teReceptionPremium) parts.push('TE-premium');
+  return parts.join(' ');
+}
+
 /**
  * Analyze a trade using VOR + positional scarcity + consolidation adjustment.
  * @param {number[]} givingIds, gettingIds - player IDs
  * @param {Array} pool - full player pool
+ * @param {Object} ctx - league context { scoringFormat, superflex, numTeams, teReceptionPremium }
  */
-function analyzeTrade(givingIds, gettingIds, pool) {
+function analyzeTrade(givingIds, gettingIds, pool, ctx = {}) {
   const playerMap = new Map(pool.map((p) => [p.id, p]));
-  const valuer = makeTradeValuer(pool);
+  const valuer = makeTradeValuer(pool, ctx);
 
   const giving = givingIds.map((id) => valuer(playerMap.get(id))).filter(Boolean);
   const getting = gettingIds.map((id) => valuer(playerMap.get(id))).filter(Boolean);
@@ -562,6 +606,7 @@ function analyzeTrade(givingIds, gettingIds, pool) {
     differential,
     verdict,
     notes,
+    context: describeContext(ctx),
   };
 }
 

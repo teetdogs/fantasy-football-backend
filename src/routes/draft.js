@@ -77,17 +77,17 @@ router.post('/recommend', async (req, res) => {
 /**
  * POST /api/draft/trade
  * Analyze a trade: compare total value of players given vs. received.
- * Body: { giving: [playerId, ...], getting: [playerId, ...] }
+ * Body: { giving: [playerId, ...], getting: [playerId, ...], league?: { scoringFormat, superflex, numTeams, teReceptionPremium } }
  */
 router.post('/trade', async (req, res) => {
   try {
-    const { giving = [], getting = [] } = req.body;
+    const { giving = [], getting = [], league = {} } = req.body;
     if (!giving.length || !getting.length) {
       return res.status(400).json({ error: 'Both giving and getting arrays required' });
     }
 
     const pool = await playerStore.getPlayers();
-    const result = gradingEngine.analyzeTrade(giving, getting, pool);
+    const result = gradingEngine.analyzeTrade(giving, getting, pool, league);
     res.json(result);
   } catch (err) {
     console.error('Error analyzing trade:', err);

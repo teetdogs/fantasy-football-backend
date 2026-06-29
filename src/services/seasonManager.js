@@ -238,14 +238,22 @@ function buildLineup(roster, week) {
  * A "need" is a position where a team's worst starter ranks below league average.
  */
 async function suggestTrades({ leagueId, swid, espnS2, teamId }) {
-  const [rosters, teams, pool] = await Promise.all([
+  const [rosters, teams, pool, settings] = await Promise.all([
     leagueService.fetchAllRosters(leagueId, swid, espnS2),
     leagueService.fetchLeagueTeams(leagueId, swid, espnS2),
     playerStore.getPlayers(),
+    leagueService.fetchLeagueSettings(leagueId, swid, espnS2).catch(() => null),
   ]);
 
   const playerMap = new Map(pool.map((p) => [p.id, p]));
   const teamMap = new Map(teams.map((t) => [t.teamId, t]));
+
+  // League context so suggestions value players the same way the analyzer does.
+  const leagueCtx = {
+    scoringFormat: settings?.scoringFormat || 'PPR',
+    numTeams: settings?.size || teams.length || 12,
+    superflex: !!settings?.rosterSlots?.some((s) => s.position === 'SUPERFLEX'),
+  };
 
   function rosterByPos(entries) {
     const byPos = {};
@@ -262,7 +270,7 @@ async function suggestTrades({ leagueId, swid, espnS2, teamId }) {
   }
 
   // Use the shared VOR + scarcity valuer so suggestions match the analyzer.
-  const valuer = makeTradeValuer(pool);
+  const valuer = makeTradeValuer(pool, leagueCtx);
   const playerValue = (p) => valuer(p)?.value || 0;
 
   const myEntries = rosters[teamId] || [];
