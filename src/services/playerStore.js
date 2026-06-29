@@ -88,9 +88,13 @@ function getMeta() {
 // Proactive background refresh — don't rely on traffic to keep data fresh.
 // Runs every TTL interval so roster cuts, injuries, and projections stay
 // current even if nobody visits for a while.
-setInterval(() => {
+// .unref() so this timer alone doesn't keep the process alive: the server's
+// HTTP listener holds it open in production, while one-off scripts that just
+// import this module can still exit cleanly when their work is done.
+const refreshTimer = setInterval(() => {
   console.log('[playerStore] background refresh triggered');
   refresh().catch((err) => console.error('[playerStore] background refresh failed:', err.message));
 }, TTL_MS);
+refreshTimer.unref();
 
 module.exports = { getPlayers, refresh, getMeta };
