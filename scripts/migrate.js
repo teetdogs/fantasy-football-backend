@@ -13,6 +13,7 @@ const pool = require('../src/db/connection');
 const MIGRATIONS = [
   'auth-schema.sql',
   '002-espn-creds.sql',
+  '003-user-leagues.sql',
 ];
 
 (async () => {

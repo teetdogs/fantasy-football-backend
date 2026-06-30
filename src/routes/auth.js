@@ -126,29 +126,58 @@ router.post('/logout', (req, res) => {
   });
 });
 
+// Make exactly one of a user's leagues active.
+async function setActiveLeague(userId, espnLeagueId) {
+  await pool.query('UPDATE user_leagues SET is_active = FALSE WHERE user_id = $1', [userId]);
+  await pool.query(
+    'UPDATE user_leagues SET is_active = TRUE WHERE user_id = $1 AND espn_league_id = $2',
+    [userId, espnLeagueId]
+  );
+}
+
+function mapLeagueRow(r) {
+  return {
+    leagueId: r.espn_league_id,
+    teamId: r.espn_team_id,
+    name: r.league_name,
+    swid: r.espn_swid,
+    espnS2: r.espn_s2,
+    isActive: r.is_active,
+  };
+}
+
 /**
  * POST /api/auth/link-league
- * Associate the logged-in user with an ESPN league + team.
+ * Add or update one of the user's leagues. Becomes active automatically.
  */
 router.post('/link-league', async (req, res) => {
   if (!req.session.userId) {
     return res.status(401).json({ error: 'Not logged in' });
   }
 
-  const { espnLeagueId, espnTeamId, espnSwid, espnS2 } = req.body;
+  const { espnLeagueId, espnTeamId, espnSwid, espnS2, leagueName } = req.body;
   if (!espnLeagueId) {
     return res.status(400).json({ error: 'espnLeagueId required' });
   }
 
   try {
-    const result = await pool.query(
-      `UPDATE users SET espn_league_id = $1, espn_team_id = $2, espn_swid = $3, espn_s2 = $4, updated_at = NOW()
-       WHERE id = $5
-       RETURNING id, email, name, picture, espn_league_id, espn_team_id`,
-      [espnLeagueId, espnTeamId || null, espnSwid || null, espnS2 || null, req.session.userId]
+    await pool.query(
+      `INSERT INTO user_leagues (user_id, espn_league_id, espn_team_id, league_name, espn_swid, espn_s2)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (user_id, espn_league_id) DO UPDATE SET
+         espn_team_id = COALESCE(EXCLUDED.espn_team_id, user_leagues.espn_team_id),
+         league_name = COALESCE(EXCLUDED.league_name, user_leagues.league_name),
+         espn_swid = EXCLUDED.espn_swid,
+         espn_s2 = EXCLUDED.espn_s2`,
+      [req.session.userId, espnLeagueId, espnTeamId || null, leagueName || null, espnSwid || null, espnS2 || null]
     );
+    await setActiveLeague(req.session.userId, espnLeagueId);
 
-    res.json({ user: result.rows[0] });
+    const { rows } = await pool.query(
+      'SELECT * FROM user_leagues WHERE user_id = $1 ORDER BY created_at ASC',
+      [req.session.userId]
+    );
+    res.json({ leagues: rows.map(mapLeagueRow) });
   } catch (err) {
     console.error('Error linking league:', err);
     res.status(500).json({ error: 'Failed to link league' });
@@ -156,33 +185,100 @@ router.post('/link-league', async (req, res) => {
 });
 
 /**
+ * GET /api/auth/leagues
+ * List all of the user's leagues (with creds — owner only) + which is active.
+ */
+router.get('/leagues', async (req, res) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Not logged in' });
+  }
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM user_leagues WHERE user_id = $1 ORDER BY created_at ASC',
+      [req.session.userId]
+    );
+    const leagues = rows.map(mapLeagueRow);
+    const active = leagues.find((l) => l.isActive) || leagues[0] || null;
+    res.json({ leagues, activeLeagueId: active ? active.leagueId : null });
+  } catch (err) {
+    console.error('Error listing leagues:', err);
+    res.status(500).json({ error: 'Failed to list leagues' });
+  }
+});
+
+/**
+ * PUT /api/auth/leagues/active
+ * Switch the active league. Body: { espnLeagueId }
+ */
+router.put('/leagues/active', async (req, res) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Not logged in' });
+  }
+  const { espnLeagueId } = req.body;
+  if (!espnLeagueId) {
+    return res.status(400).json({ error: 'espnLeagueId required' });
+  }
+  try {
+    await setActiveLeague(req.session.userId, espnLeagueId);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Error switching league:', err);
+    res.status(500).json({ error: 'Failed to switch league' });
+  }
+});
+
+/**
+ * DELETE /api/auth/leagues/:leagueId
+ * Remove a league. If it was active, promote the most-recent remaining one.
+ */
+router.delete('/leagues/:leagueId', async (req, res) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Not logged in' });
+  }
+  try {
+    const { rows: deleted } = await pool.query(
+      'DELETE FROM user_leagues WHERE user_id = $1 AND espn_league_id = $2 RETURNING is_active',
+      [req.session.userId, req.params.leagueId]
+    );
+
+    // If we removed the active league, promote another so one stays active.
+    if (deleted[0]?.is_active) {
+      const { rows: remaining } = await pool.query(
+        'SELECT espn_league_id FROM user_leagues WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1',
+        [req.session.userId]
+      );
+      if (remaining[0]) await setActiveLeague(req.session.userId, remaining[0].espn_league_id);
+    }
+
+    const { rows } = await pool.query(
+      'SELECT * FROM user_leagues WHERE user_id = $1 ORDER BY created_at ASC',
+      [req.session.userId]
+    );
+    res.json({ leagues: rows.map(mapLeagueRow) });
+  } catch (err) {
+    console.error('Error removing league:', err);
+    res.status(500).json({ error: 'Failed to remove league' });
+  }
+});
+
+/**
  * GET /api/auth/league-creds
- * Return saved ESPN credentials for the logged-in user.
- * Cookies are sensitive — only return them to the authenticated owner.
+ * Return the ACTIVE league's credentials (backward compat for callers that
+ * still expect a single league). Owner only.
  */
 router.get('/league-creds', async (req, res) => {
   if (!req.session.userId) {
     return res.status(401).json({ error: 'Not logged in' });
   }
-
   try {
-    const result = await pool.query(
-      'SELECT espn_league_id, espn_team_id, espn_swid, espn_s2 FROM users WHERE id = $1',
+    const { rows } = await pool.query(
+      `SELECT * FROM user_leagues WHERE user_id = $1
+       ORDER BY is_active DESC, created_at ASC LIMIT 1`,
       [req.session.userId]
     );
-
-    if (!result.rows.length || !result.rows[0].espn_league_id) {
-      return res.json({ linked: false });
-    }
-
-    const row = result.rows[0];
-    res.json({
-      linked: true,
-      leagueId: row.espn_league_id,
-      teamId: row.espn_team_id,
-      swid: row.espn_swid,
-      espnS2: row.espn_s2,
-    });
+    if (!rows.length) return res.json({ linked: false });
+    const l = mapLeagueRow(rows[0]);
+    res.json({ linked: true, leagueId: l.leagueId, teamId: l.teamId, swid: l.swid, espnS2: l.espnS2 });
   } catch (err) {
     console.error('Error fetching league creds:', err);
     res.status(500).json({ error: 'Failed to fetch credentials' });
