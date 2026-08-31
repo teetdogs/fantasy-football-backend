@@ -26,8 +26,10 @@ function enrich(playerId, playerMap) {
     team: p.team,
     consensusRank: p.consensusRank || p.rank || null,
     projectedPoints: p.projected_points ?? null,
+    weeklyPts: p.weekly?.projPts ?? null,
+    opponent: p.weekly?.opponent ?? null,
     byeWeek: p.bye_week ?? null,
-    injuryStatus: p.injuryStatus || null,
+    injuryStatus: p.weekly?.injuryStatus || p.injuryStatus || null,
   };
 }
 
@@ -119,7 +121,7 @@ async function buildMyTeam({ leagueId, swid, espnS2, teamId }) {
   const numTeams = Object.keys(rosters).length || 10;
   const grade = gradeRoster(rosterPoolPlayers, pool, numTeams);
 
-  const lineup = buildLineup(roster);
+  const lineup = buildLineup(roster, playerStore.getMeta().week);
 
   return {
     teamId,
@@ -184,13 +186,21 @@ function buildLineup(roster, week) {
     { slot: 'DEF1', pos: ['DEF'], count: 1 },
   ];
 
-  const available = roster.map((p) => ({
-    ...p,
-    onBye: week && p.byeWeek === week,
-    hurt: p.injuryStatus && p.injuryStatus !== 'ACTIVE' && p.injuryStatus !== 'QUESTIONABLE',
-    playable: !(week && p.byeWeek === week) && !(p.injuryStatus && ['OUT', 'IR', 'SUSPENDED'].includes(p.injuryStatus)),
-    pts: p.projectedPoints ?? 0,
-  }));
+  // Statuses that mean a player can't be started (covers ESPN + Sleeper values).
+  const OUT_STATUSES = ['OUT', 'IR', 'PUP', 'SUS', 'SUSPENDED', 'DNR', 'NA'];
+  // Prefer Sleeper's weekly projection when we have it; fall back to season-long.
+  const usesWeekly = roster.some((p) => p.weeklyPts != null);
+
+  const available = roster.map((p) => {
+    const inj = (p.injuryStatus || '').toUpperCase();
+    return {
+      ...p,
+      onBye: week && p.byeWeek === week,
+      hurt: inj && inj !== 'ACTIVE' && inj !== 'QUESTIONABLE',
+      playable: !(week && p.byeWeek === week) && !OUT_STATUSES.includes(inj),
+      pts: p.weeklyPts ?? p.projectedPoints ?? 0,
+    };
+  });
 
   const used = new Set();
   const starters = [];
@@ -229,7 +239,7 @@ function buildLineup(roster, week) {
 
   const totalPts = Math.round(starters.reduce((s, p) => s + p.pts, 0));
 
-  return { starters, bench, swaps, totalPts, week };
+  return { starters, bench, swaps, totalPts, week, usesWeekly };
 }
 
 /**

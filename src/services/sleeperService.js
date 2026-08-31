@@ -68,4 +68,57 @@ async function fetchSleeperADP() {
   return result;
 }
 
-module.exports = { fetchSleeperADP };
+/**
+ * Current NFL week/season from Sleeper. Used to target weekly projections.
+ * Returns { season, seasonType, week }.
+ */
+async function fetchNflState() {
+  const s = await fetch('https://api.sleeper.app/state/nfl');
+  return {
+    season: String(s.season || SEASON),
+    seasonType: s.season_type || 'regular',
+    week: s.week || s.display_week || 1,
+  };
+}
+
+/**
+ * Weekly projections for a given week, keyed by ESPN id. Each value carries
+ * projected PPR points, the week's opponent, and injury status — the in-season
+ * data that powers a week-aware Start/Sit.
+ */
+async function fetchWeeklyProjections(week, season = SEASON) {
+  await crosswalk.load();
+
+  const posQuery = POSITIONS.map((p) => `position=${p}`).join('&');
+  const url = `https://api.sleeper.app/projections/nfl/${season}/${week}?season_type=regular&${posQuery}`;
+
+  const data = await fetch(url);
+  if (!Array.isArray(data)) throw new Error('Sleeper weekly returned non-array');
+
+  const result = {};
+  let matched = 0;
+
+  for (const entry of data) {
+    const sleeperId = String(entry.player_id || '');
+    const pts = entry.stats?.pts_ppr;
+    if (!sleeperId || pts == null) continue;
+
+    const pi = entry.player || {};
+    const pName = [pi.first_name, pi.last_name].filter(Boolean).join(' ');
+    const pTeam = pi.team_abbr || pi.team || entry.team;
+    const espnId = crosswalk.sleeperToEspn(sleeperId) || crosswalk.nameToEspn(pName, pTeam);
+    if (!espnId) continue;
+
+    matched++;
+    result[espnId] = {
+      projPts: Math.round(pts * 10) / 10,
+      opponent: entry.opponent || null,
+      injuryStatus: pi.injury_status || null,
+    };
+  }
+
+  console.log(`[sleeper] week ${week}: ${data.length} projections, matched ${matched} to ESPN ids`);
+  return result;
+}
+
+module.exports = { fetchSleeperADP, fetchNflState, fetchWeeklyProjections };

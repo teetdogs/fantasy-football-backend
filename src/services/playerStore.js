@@ -11,6 +11,7 @@ const ESPNService = require('./espnService');
 const statsService = require('./statsService');
 const crosswalk = require('./crosswalk');
 const multiSource = require('./multiSource');
+const sleeperService = require('./sleeperService');
 
 const TTL_MS = parseInt(process.env.PLAYER_CACHE_TTL_MS || `${6 * 60 * 60 * 1000}`, 10); // 6h
 const PLAYER_LIMIT = parseInt(process.env.PLAYER_LIMIT || '300', 10);
@@ -20,6 +21,8 @@ let cache = {
   source: null, // 'espn' | 'mock'
   sources: [],  // which enrichment sources succeeded
   fetchedAt: 0,
+  week: null,        // current NFL week (Sleeper)
+  seasonType: null,  // 'pre' | 'regular' | 'post'
 };
 
 let inflight = null;
@@ -61,7 +64,33 @@ async function refresh() {
     console.error(`[playerStore] multi-source enrichment failed: ${err.message}`);
   }
 
-  cache = { players, source: primarySource, sources: activeSources, fetchedAt: Date.now() };
+  // In-season weekly overlay (Sleeper) — kept SEPARATE from the consensus blend
+  // above. Attaches this week's projection/opponent/injury to each player as
+  // player.weekly, without touching the pre-draft ranking. Empty in preseason.
+  let week = null;
+  let seasonType = null;
+  try {
+    const state = await sleeperService.fetchNflState();
+    week = state.week;
+    seasonType = state.seasonType;
+    if (seasonType !== 'pre') {
+      const weekly = await sleeperService.fetchWeeklyProjections(state.week, state.season);
+      let overlaid = 0;
+      for (const p of players) {
+        const w = weekly[p.id];
+        if (w) {
+          p.weekly = { week: state.week, projPts: w.projPts, opponent: w.opponent, injuryStatus: w.injuryStatus };
+          overlaid++;
+        }
+      }
+      if (overlaid > 0) activeSources.push('sleeper-weekly');
+      console.log(`[playerStore] weekly overlay: week ${state.week}, ${overlaid} players`);
+    }
+  } catch (err) {
+    console.error(`[playerStore] weekly overlay failed: ${err.message}`);
+  }
+
+  cache = { players, source: primarySource, sources: activeSources, fetchedAt: Date.now(), week, seasonType };
   console.log(`[playerStore] ready — sources: ${activeSources.join(', ')}`);
   return cache.players;
 }
@@ -82,6 +111,8 @@ function getMeta() {
     sources: cache.sources,
     count: cache.players ? cache.players.length : 0,
     fetchedAt: cache.fetchedAt ? new Date(cache.fetchedAt).toISOString() : null,
+    week: cache.week,
+    seasonType: cache.seasonType,
   };
 }
 
